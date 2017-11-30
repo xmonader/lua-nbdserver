@@ -44,44 +44,42 @@ ffi.cdef[[
         --  c8 means 8 chars 
    ]]
 
-local onstart = function(clientsock)
+local handle_request = function(clientsock)
+    READ, WRITE, CLOSE = 0,1,2
+    afile:seek('set', 2)
+
+    local nbdmagic = 'NBDMAGIC\x00\x00\x42\x02\x81\x86\x12\x53' .. struct.pack('>L', afile:seek()) .. string.rep('\0',128)
+    clientsock:send(nbdmagic)
+    print("MAGIC SENT")
+
     while true do
-        READ, WRITE, CLOSE = 0,1,2
-        afile:seek('set', 2)
+        local header = clientsock:read(28)
+        print("RECEIVED HEADER: ", header, " #HEADER: ", #header)
 
-        local nbdmagic = 'NBDMAGIC\x00\x00\x42\x02\x81\x86\x12\x53' .. struct.pack('>L', afile:seek()) .. string.rep('\0',128)
-        clientsock:send(nbdmagic)
-        print("MAGIC SENT")
+        local magic, request, handle, offset, dlen = struct.unpack('>IIc8LI', header)
+        print("MAGIC: ", string.format("%x", magic), " REQUEST: ", request,  "HANDLE:" , handle, "OFFSET:", offset, "DLEN:", dlen)
+        assert(magic == 0x25609513, string.format("Parsed MAGIC %x doesnt equal 0x25609513", magic))
+        if request == READ then 
+            afile:seek('set', offset)
+            local datatosend = afile:read(dlen)
+            clientsock:write('gDf\x98\x00\x00\x00\x00\x00'.. struct.pack(">c8", handle))
+            clientsock:write(datatosend)
 
-        while true do
-            local header = clientsock:read(28)
-            print("RECEIVED HEADER: ", header, " #HEADER: ", #header)
-    
-            local magic, request, handle, offset, dlen = struct.unpack('>IIc8LI', header)
-            print("MAGIC: ", string.format("%x", magic), " REQUEST: ", request,  "HANDLE:" , handle, "OFFSET:", offset, "DLEN:", dlen)
-            assert(magic == 0x25609513, string.format("Parsed MAGIC %x doesnt equal 0x25609513", magic))
-            if request == READ then 
-                afile:seek('set', offset)
-                local datatosend = afile:read(dlen)
-                clientsock:write('gDf\x98\x00\x00\x00\x00\x00'.. struct.pack(">c8", handle))
-                clientsock:write(datatosend)
-
-                print(string.format("read\t0x%08x\t0x%08x", offset, dlen), os.time())
-            elseif request == WRITE then
-                afile:seek('set', offset)
-                afile:write(clientsock:read(dlen))
-                afile:flush()
-                clientsock:write('gDf\x98\0\0\0\0'..struct.pack(">c8", handle))
-                print(string.format("write\t0x%08x\t0x%08x",offset, dlen), os.time())
-            elseif request == CLOSE then
-                clientsock:close()
-                print "closed"
-                return
-            else
-                print("ignored request", request)
-            end
+            print(string.format("read\t0x%08x\t0x%08x", offset, dlen), os.time())
+        elseif request == WRITE then
+            afile:seek('set', offset)
+            afile:write(clientsock:read(dlen))
+            afile:flush()
+            clientsock:write('gDf\x98\0\0\0\0'..struct.pack(">c8", handle))
+            print(string.format("write\t0x%08x\t0x%08x",offset, dlen), os.time())
+        elseif request == CLOSE then
+            clientsock:close()
+            print "closed"
+            return
+        else
+            print("ignored request", request)
         end
     end
 end
 
-socket.tcp_server(host, port, onstart)
+socket.tcp_server(host, port, handle_request)
