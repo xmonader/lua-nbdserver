@@ -53,18 +53,22 @@ class nbd_client(object):
         assert(magic == 0x00420281861253)
         # ignore trailing zeroes
         self._s.recv(124)
+        print("DONE HERE")
 
     def _build_header(self, request_type, offset, length):
         self._is_read = False
         header = struct.pack('>LLQQL', 0x25609513,
                              request_type, self._handle, offset, length)
-        print("HEADER IS ", header)
+        print("SENDING HEADER IS ", header, len(header))
         return header
 
     def _parse_reply(self):
         data = ""
         reply = self._s.recv(4 + 4 + 8)
         (magic, errno, handle) = struct.unpack(">LLQ", reply)
+        print(">>>GOT REPLY: reply", reply)
+        print(">>>>>MAGIC: ", magic, "errno: ", errno, "HANDLE: ", handle)
+        # return "a", 0
         assert(magic == 0x67446698)
         assert(handle == self._handle)
         self._handle += 1
@@ -85,7 +89,9 @@ class nbd_client(object):
         header = self._build_header(self.WRITE, offset, len(data))
         print("SENDING: ", header)
         self._s.send(header + data)
+        print("HEADER SENT..")
         (data, errno) = self._parse_reply()
+        print(data)
         assert(errno == 0)
         return len(data)
 
