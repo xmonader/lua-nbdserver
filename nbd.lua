@@ -12,8 +12,8 @@ local host = "0.0.0.0"
 local port = 17000
 
 
+-- investiage if we can do better parsing binary structs using FFI.
 ffi.cdef[[
-   #pragma packed(1)
    typedef struct {
      uint32_t  magic;
      uint32_t  request;
@@ -49,47 +49,32 @@ local onstart = function(clientsock)
         READ, WRITE, CLOSE = 0,1,2
         afile:seek('set', 2)
 
-        local nbdmagic = 'NBDMAGIC\x00\x00\x42\x02\x81\x86\x12\x53' .. struct.pack('>d', afile:seek()) .. string.rep('\0',128)
+        local nbdmagic = 'NBDMAGIC\x00\x00\x42\x02\x81\x86\x12\x53' .. struct.pack('>L', afile:seek()) .. string.rep('\0',128)
         clientsock:send(nbdmagic)
         print("MAGIC SENT")
 
         while true do
-            header = clientsock:read(28)
-            print("RECEIVED HEADER: ", header, " LEN HEADER: ", #header)
-            request_packet = ffi.new("nbd_request_t")
-            ffi.copy(request_packet, header, ffi.sizeof(request_packet))
-            print(request_packet)
-            magic, request, handle, offset, dlen = tonumber(request_packet.magic), tonumber(request_packet.request), tonumber(request_packet.handle), tonumber(request_packet.offset), tonumber(request_packet.dlen)
-     
-            -- magic, request, handle, offset, dlen = struct.unpack('>LLc8dL', header)
+            local header = clientsock:read(28)
+            print("RECEIVED HEADER: ", header, " #HEADER: ", #header)
+    
+            local magic, request, handle, offset, dlen = struct.unpack('>IIc8LI', header)
             print("MAGIC: ", string.format("%x", magic), " REQUEST: ", request,  "HANDLE:" , handle, "OFFSET:", offset, "DLEN:", dlen)
-            -- # FIXME: why magic is parsed wrong?
-            if magic ~= tonumber(string.format("%x", 0x25609513)) then
-                print("MAGIC doesnt equal 0x25609513")
-            end
+            assert(magic == 0x25609513, string.format("Parsed MAGIC %x doesnt equal 0x25609513", magic))
             if request == READ then 
-                -- TODO: Sounds like a good idea if we can just pack it into a string 
-                -- nbd_reply = ffi.new("nbd_reply_t")
-                -- nbd_reply.magic = magic
-                -- nbd_reply.error = 0
-                -- nbd_reply.handle = string.format("%x", handle)
-
                 afile:seek('set', offset)
                 local datatosend = afile:read(dlen)
-                -- handle is always :: '\x00\x00\x00\x00\x00\x00\x00\x00' 
-                clientsock:write('gDf\x98\x00\x00\x00\x00\x00'.. struct.pack(">L", handle))
-                clientsock:send(datatosend)
+                clientsock:write('gDf\x98\x00\x00\x00\x00\x00'.. struct.pack(">c8", handle))
+                clientsock:write(datatosend)
 
                 print(string.format("read\t0x%08x\t0x%08x", offset, dlen), os.time())
             elseif request == WRITE then
                 afile:seek('set', offset)
-                -- afile:write(recvall(clientsock, dlen))
                 afile:write(clientsock:read(dlen))
                 afile:flush()
-                clientsock.send('gDf\x98\0\0\0\0'..'\x00\x00\x00\x00\x00\x00\x00\x00')--handle
+                clientsock:write('gDf\x98\0\0\0\0'..struct.pack(">c8", handle))
                 print(string.format("write\t0x%08x\t0x%08x",offset, dlen), os.time())
             elseif request == CLOSE then
-                -- clientsock:close()
+                clientsock:close()
                 print "closed"
                 return
             else
